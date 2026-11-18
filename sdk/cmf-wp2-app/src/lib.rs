@@ -386,6 +386,10 @@ pub const WIDGET: u8 = 1;
 /// `app_features!` flag: the app can run as its own page next to the watch face (`Api::on_page`); the Apps menu
 /// offers "Add page".
 pub const PAGE: u8 = 2;
+/// `app_features!` flag: the app's widget is the small tile (166×166, next to the stock small ones) instead of the
+/// wide one. It shows the same title and value lines, cut to the tile: about five characters each. Keep `WIDGET`
+/// next to it: a loader or stub from before the small tiles (stub 7) then still offers the wide one.
+pub const WIDGET_SMALL: u8 = 4;
 
 /// Declares what the app offers beyond its menu row: `app_features!(cmf_wp2_app::WIDGET | cmf_wp2_app::PAGE);`
 /// (docs/app-guide.md, "Widget" and "Page"). Placed after the icon.

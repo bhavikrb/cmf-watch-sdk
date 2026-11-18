@@ -14,7 +14,7 @@ from wp2apps import paths
 OUT = paths.ROOT / "runs" / "app-widgets"
 RUNNING = harness.STUB_RAM + 6
 APPS = ["hello", "vibration-lab", "hr-probe", "herdr-agents"]
-TITLES = {"hello": b"Hello", "vibration-lab": b"Vibration Lab", "hr-probe": b"Last heart rate", "herdr-agents": b"herdr"}
+TITLES = {"hello": b"Hello", "vibration-lab": b"Vibration Lab", "hr-probe": b"Pulse", "herdr-agents": b"herdr"}
 # wide widgets at (61, 61) and (61, 239) on a card, 344x166
 TOP, BOTTOM = 61, 239
 X, W, H = 61, 344, 166

@@ -7,7 +7,7 @@
 use cmf_wp2_app::{Api, BUTTON, CROWN, HEART, TOUCH_DOWN};
 
 cmf_wp2_app::entry!(main);
-cmf_wp2_app::app_features!(cmf_wp2_app::WIDGET);
+cmf_wp2_app::app_features!(cmf_wp2_app::WIDGET | cmf_wp2_app::WIDGET_SMALL);
 
 // [heart_rate() result, HEART events, last delta, last x]; non-zero initialiser: in .data, fresh at every launch
 #[unsafe(no_mangle)]
@@ -32,15 +32,14 @@ fn draw(api: &Api, bpm: i16) {
     api.show();
 }
 
-// the card widget (docs/app-guide.md, "Widget"): the last reading, written once on exit
+// the card widget (docs/app-guide.md, "Widget"): the last reading, written once on exit. A caption and a number:
+// what the small tile this app declares has room for
 fn widget(api: &Api, bpm: i32) {
-    let mut text = *b"--- bpm";
-    if bpm > 0 {
-        let b = bpm as u16;
-        text[..3].copy_from_slice(&[b'0' + (b / 100 % 10) as u8, b'0' + (b / 10 % 10) as u8, b'0' + (b % 10) as u8]);
-    }
-    let value = if bpm > 0 { core::str::from_utf8(&text).unwrap_or("") } else { "No reading" };
-    api.widget("Last heart rate", value);
+    let b = bpm.clamp(0, 999) as u16;
+    let digits = [b'0' + (b / 100) as u8, b'0' + (b / 10 % 10) as u8, b'0' + (b % 10) as u8];
+    let from = if b >= 100 { 0 } else if b >= 10 { 1 } else { 2 };
+    let value = if bpm > 0 { core::str::from_utf8(&digits[from..]).unwrap_or("") } else { "--" };
+    api.widget("Pulse", value);
 }
 
 fn main(api: &'static Api) -> i32 {
