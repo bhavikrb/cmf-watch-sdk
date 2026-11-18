@@ -17,6 +17,8 @@ NOR_APP_OFFSET = 0x24000
 NOR_APP_SIZE = 0x34B000
 STUB_MAX = 0x4000
 STUB_HEADER = struct.Struct("<4sIIIIIII")
+# header 2 adds one word: the stub's wgt_reg lookup (small tiles of widget 0x40, fw/wp2-stub/src/card.rs)
+STUB_HEADER_2 = struct.Struct("<4sIIIIIIII")
 VIEW_TABLE, VIEW_TABLE_END = 0x100004B8, 0x100013E8
 # 0x101461AC and 0x10055458 hold the same values but bound neighbouring tables (docs/recon.md)
 VIEW_START_LITERALS = (0x1018BC24, 0x1018DF3C)
@@ -36,6 +38,9 @@ STOCK_APPLIST_LAYOUT = 0x1005EEE5
 WGT_REG = 0x101EFC88
 WGT_ID = 0x40
 WGT_ENTRY = struct.Struct("<BBHII5I")
+# the card layout's only lookup of a card entry's widget: r0 = id, r3 = the entry's param (docs/recon.md)
+WGT_LOOKUP_CALL = 0x1009BAC2
+STOCK_WGT_LOOKUP = 0x1009B79C
 # the only stock call that switches the motor on (docs/recon.md); 0x100FB168 and 0x100FB2A8 pass pulse 0
 MOTOR_CALL = 0x100FB398
 STOCK_MOTOR = 0x100FB4B4
@@ -224,9 +229,10 @@ def patch(app: bytes, stub: bytes | None = None, *, motor: int | None = None, re
 
 def add_stub(out: bytearray, stub: bytes) -> None:
     magic, version, boot, ble, view_proc, view_name, applist, widget = STUB_HEADER.unpack_from(stub)
+    lookup = STUB_HEADER_2.unpack_from(stub)[-1] if version == 2 else 0
     base = APP_VBASE + STUB_OFFSET
-    code = (boot, view_proc) + tuple(p for p in (ble, applist) if p)
-    if (magic != b"WP2S" or version != 1 or not all(p & 1 for p in code)
+    code = (boot, view_proc) + tuple(p for p in (ble, applist, lookup) if p)
+    if (magic != b"WP2S" or version not in (1, 2) or not all(p & 1 for p in code)
             or not all(base <= p & ~1 < base + len(stub) for p in (*code, view_name))):
         raise ValueError("bad stub header")
     if widget:
@@ -236,6 +242,8 @@ def add_stub(out: bytearray, stub: bytes) -> None:
         wid, callbacks = entry[0], entry[5:]
         if wid != WGT_ID or not all(p & 1 and base <= p & ~1 < base + len(stub) for p in callbacks):
             raise ValueError("bad stub widget entry")
+    if lookup and not widget:
+        raise ValueError("bad stub header: a widget lookup without a widget entry")
     if len(out) != STUB_OFFSET:
         raise ValueError(f"app.bin is {len(out):#x} bytes; the stub goes at {STUB_OFFSET:#x}")
     out += stub
@@ -257,6 +265,8 @@ def add_stub(out: bytearray, stub: bytes) -> None:
         put(out, APPLIST_LAYOUT, struct.pack("<I", STOCK_APPLIST_LAYOUT), struct.pack("<I", applist))
     if widget:
         put(out, WGT_REG + 4 * WGT_ID, bytes(4), struct.pack("<I", widget))
+    if lookup:
+        put(out, WGT_LOOKUP_CALL, thumb_bl(WGT_LOOKUP_CALL, STOCK_WGT_LOOKUP), thumb_bl(WGT_LOOKUP_CALL, lookup & ~1))
 
 
 def changed_ranges(old: bytes, new: bytes, gap: int = 16) -> list[tuple[int, int]]:

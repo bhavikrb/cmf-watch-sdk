@@ -19,6 +19,7 @@ class PackageTest(unittest.TestCase):
     def test_features(self):
         from wp2apps import icon
         self.assertEqual(package.features(b"WP2F\x03\0\0\0" + bytes(8)), ["widget", "page"])
+        self.assertEqual(package.features(b"WP2F\x06\0\0\0" + bytes(8)), ["page", "widget-small"])
         self.assertEqual(package.features(bytes(16)), [])
         with_icon = icon.encode(96, 96, bytes(96 * 96 * 4))
         self.assertEqual(package.features(with_icon + b"WP2F\x02\0\0\0"), ["page"])

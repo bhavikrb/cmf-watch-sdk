@@ -16,9 +16,10 @@ HAVE_STOCK = STOCK is not None
 
 
 def fake_stub(boot=0x1025A0A1, ble=0x1025A0C1, view_proc=0x1025A0E1, view_name=0x1025A100, applist=0, widget=0,
-              entry=None):
-    """entry: a widget registry entry placed at WIDGET_AT."""
-    stub = bytearray(b"WP2S" + struct.pack("<IIIIIII", 1, boot, ble, view_proc, view_name, applist, widget) + bytes(0x100))
+              entry=None, lookup=None):
+    """entry: a widget registry entry placed at WIDGET_AT. lookup: header 2, with that wgt_reg lookup."""
+    head = struct.pack("<IIIIIII", 1 if lookup is None else 2, boot, ble, view_proc, view_name, applist, widget)
+    stub = bytearray(b"WP2S" + head + (b"" if lookup is None else struct.pack("<I", lookup)) + bytes(0x100))
     if entry is not None:
         at = WIDGET_AT - 0x1025A080
         stub[at:at + len(entry)] = entry
@@ -41,7 +42,8 @@ def synthetic_app():
         for lit in lits:
             struct.pack_into("<I", app, lit - 0x10000000, value)
     struct.pack_into("<I", app, firmware.APPLIST_LAYOUT - 0x10000000, firmware.STOCK_APPLIST_LAYOUT)
-    for at, target in ((firmware.BOOT_CALL, firmware.STOCK_HEAP_INIT), (firmware.BLE_CALL, firmware.STOCK_BLE_READ)):
+    for at, target in ((firmware.BOOT_CALL, firmware.STOCK_HEAP_INIT), (firmware.BLE_CALL, firmware.STOCK_BLE_READ),
+                       (firmware.WGT_LOOKUP_CALL, firmware.STOCK_WGT_LOOKUP)):
         app[at - 0x10000000:at - 0x10000000 + 4] = firmware.thumb_bl(at, target)
     return app
 
@@ -293,6 +295,41 @@ class FirmwareTest(unittest.TestCase):
         firmware.add_stub(without, fake_stub())
         self.assertEqual(without[slot:slot + 4], bytes(4))
         self.assertEqual({i for i in range(firmware.STUB_OFFSET) if out[i] != without[i]}, set(range(slot, slot + 4)))
+
+    def test_widget_lookup_patched(self):
+        call = firmware.WGT_LOOKUP_CALL - 0x10000000
+        out, without = synthetic_app(), synthetic_app()
+        firmware.add_stub(out, fake_stub(widget=WIDGET_AT, entry=widget_entry(), lookup=0x1025A0C1))
+        firmware.add_stub(without, fake_stub(widget=WIDGET_AT, entry=widget_entry()))
+        self.assertEqual(out[call:call + 4], firmware.thumb_bl(firmware.WGT_LOOKUP_CALL, 0x1025A0C0))
+        self.assertEqual(without[call:call + 4], firmware.thumb_bl(firmware.WGT_LOOKUP_CALL, firmware.STOCK_WGT_LOOKUP),
+                         "a header 1 stub leaves the stock lookup")
+        # the longer header moves the view table that follows the stub, so its four literals differ too
+        literals = {lit - 0x10000000 + i for lit in firmware.VIEW_START_LITERALS + firmware.VIEW_END_LITERALS for i in range(4)}
+        self.assertEqual({i for i in range(firmware.STUB_OFFSET) if out[i] != without[i]} - literals, set(range(call, call + 4)))
+        for name, bad in (("arm", dict(lookup=0x1025A0C0)), ("outside", dict(lookup=0x101B1A05)),
+                          ("no widget", dict(lookup=0x1025A0C1, widget=0, entry=None))):
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "stub"):
+                firmware.add_stub(synthetic_app(), fake_stub(**{"widget": WIDGET_AT, "entry": widget_entry(), **bad}))
+        moved = synthetic_app()
+        moved[call:call + 4] = firmware.thumb_bl(firmware.WGT_LOOKUP_CALL, 0x1009B7B0)
+        with self.assertRaisesRegex(ValueError, "unexpected bytes"):
+            firmware.add_stub(moved, fake_stub(widget=WIDGET_AT, entry=widget_entry(), lookup=0x1025A0C1))
+
+    @skipUnless(HAVE_STOCK, "needs JX402_V1.0.0.73.bin")
+    def test_widget_lookup_call_in_stock(self):
+        # the patched call is the card layout's lookup of a card entry: `ldrb r3, [r3, #2]` (the param) two
+        # instructions before it, `mov r4, r0` (the entry) right after its return (docs/recon.md, "Widget cards")
+        call = firmware.WGT_LOOKUP_CALL - 0x10000000
+        self.assertEqual(STOCK[call:call + 4], firmware.thumb_bl(firmware.WGT_LOOKUP_CALL, firmware.STOCK_WGT_LOOKUP))
+        self.assertEqual(STOCK[call - 6:call - 4], bytes.fromhex("9b78"))
+        self.assertEqual(STOCK[call + 6:call + 8], bytes.fromhex("0446"))
+        # no other call takes a card entry's widget from the registry: the second one is the fallback to id 0
+        calls = [at for at in range(0x10000000, 0x101E0000, 2)
+                 if STOCK[at - 0x10000000:at - 0x10000000 + 4] == firmware.thumb_bl(at, firmware.STOCK_WGT_LOOKUP)]
+        self.assertEqual(calls, [firmware.WGT_LOOKUP_CALL, 0x1009BAE0])
+        out = firmware.patch(STOCK, fake_stub(widget=WIDGET_AT, entry=widget_entry(), lookup=0x1025A0C1))
+        self.assertEqual(out[call:call + 4], firmware.thumb_bl(firmware.WGT_LOOKUP_CALL, 0x1025A0C0))
 
     def test_widget_slot_must_be_free(self):
         out = synthetic_app()

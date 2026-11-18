@@ -60,6 +60,9 @@ class CardsTest(unittest.TestCase):
     def test_parse_card(self):
         self.assertEqual(cards.parse_card("view:0xB2"), View(0xB2))
         self.assertEqual(cards.parse_card("widgets:0x19,64/2"), Widgets(((0x19, 0), (64, 2))))
+        self.assertEqual(cards.parse_card("widgets:0x40/3s,0x40/0s,0x40/1"), Widgets(((0x40, 0x83), (0x40, 0x80), (0x40, 1))))
+        with self.assertRaisesRegex(ValueError, "small"):
+            cards.parse_card("widgets:0x19/1s")
         for bad in ("tile:1", "view:", "widgets:", "widgets:1,,2", "view:0xB2,1", "widgets:0x40/2/3"):
             with self.subTest(bad), self.assertRaises(ValueError):
                 cards.parse_card(bad)

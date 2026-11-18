@@ -16,6 +16,8 @@ MAX_CARDS = 8
 MAX_WIDGETS = 4
 # the stub's "Apps" widget (fw/wp2-stub/src/card.rs): opens the loader menu, needs the stub with a widget entry
 APPS_WIDGET = 0x40
+# param bit of 0x40: the small tile (166x166) instead of the wide one, stub 7 (wp2-core cards.rs)
+SMALL = 0x80
 
 
 @dataclass(frozen=True)
@@ -84,7 +86,8 @@ def with_apps(cards: Cards) -> Cards:
 
 
 def parse_card(spec: str) -> Card:
-    """`view:0xB2` or `widgets:0x19,0x40/2` (id[/param], comma separated)."""
+    """`view:0xB2` or `widgets:0x19,0x40/2,0x40/3s` (id[/param], comma separated; `s` after the param of 0x40 = its
+    small tile, param | 0x80)."""
     kind, _, rest = spec.partition(":")
     if kind == "view":
         return View(int(rest, 0))
@@ -92,7 +95,10 @@ def parse_card(spec: str) -> Card:
         pairs = []
         for item in rest.split(","):
             wid, _, param = item.partition("/")
-            pairs.append((int(wid, 0), int(param, 0) if param else 0))
+            small = SMALL if param.endswith("s") else 0
+            if small and int(wid, 0) != APPS_WIDGET:
+                raise ValueError(f"bad card {spec!r}: only widget {APPS_WIDGET:#x} has a small tile")
+            pairs.append((int(wid, 0), (int(param.removesuffix("s"), 0) if param else 0) | small))
         return Widgets(tuple(pairs))
     raise ValueError(f"bad card {spec!r}: view:ID or widgets:ID[/PARAM],...")
 

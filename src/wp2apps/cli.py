@@ -359,7 +359,8 @@ def parser():
                                                   "\"Widget cards\"); set and add-apps write to the watch")
     actions = cards_cmd.add_subparsers(dest="action", required=True)
     for name, help_ in (("get", "Print the card list"),
-                        ("set", "Replace the list: view:ID (a stock view) or widgets:ID[/PARAM],... (up to 4)"),
+                        ("set", "Replace the list: view:ID (a stock view) or widgets:ID[/PARAM],... (up to 4; "
+                                "0x40/Ns = app N-1's small tile)"),
                         ("add-apps", "Append a card with the stub's Apps widget (id 0x40) unless one has it")):
         sub = actions.add_parser(name, help=help_)
         if name == "set":
