@@ -631,6 +631,28 @@ clears it. The app writes the record with an `lv_submit` WIDGET record (op `0x14
 `Api::widget`); the loader writes the file on the app thread. App removal (BLE `DELETE`, the menu's long press,
 another app installed into the slot) unlinks it. Stub size: `0x2B5F` → `0x2DB3` bytes; with the view table `0x3D00` of `0x4000`.
 
+### Small tiles (stub version 7)
+
+Static analysis of `app.bin` 1.0.0.73 and the patched image. Emulator proof: `tests/test_small_tiles_e2e.py`
+(2026-11-18). Three class-1 tiles share a card — hello, hr-probe's name cut to `hr…`, the Apps icon — with a black
+gap between the top pair. A tap on the right tile starts hr-probe; after it exits, that tile reads `Pulse` / `--`
+(the emulator sent no heart-rate event). "Add widget" on hr-probe, which declares `WIDGET_SMALL`, puts the small
+tile under the wide Apps tile. No `wgt_reg not found`, no FATAL. Frames in `runs/small-tiles/` (not committed).
+
+| Item | Finding | Confidence |
+|---|---|---|
+| Free ids | `0x40` is the only NULL among the 99 `wgt_reg` pointers, and the table is followed at once by the slot descs (`0x101EFE14`), so there is no room for a second id | high (static) |
+| Who reads the registry | one literal holds `0x101EFC88` (`0x1009B7AC`, in the lookup `0x1009B79C`), and the lookup has two callers, both in the card layout `0x1009B9E8`: `0x1009BAC2` for a card entry's widget and `0x1009BAE0`, which asks for id 0 after a failed lookup (`tests/test_firmware.py` scans for both) | high (static) |
+| The call at `0x1009BAC2` | `ldr r3, [sp, #4]` (the card entry) · `mov r0, r2` (widget id) · `ldrb r3, [r3, #2]` (param) · two stores to the stack · `bl 0x1009B79C`. So at the call r0 = id and r3 = param; the stock lookup itself uses r3 as scratch and the layout reloads r2 from the stack after it | high (static) |
+| What the layout takes from the entry | the size class (`ldrb r5, [r0, #1]` at `0x1009BB4A`: container size and radius by `r5`, the row advance, the `cmp r5, #2` for a tall tile), the state size (`+2`), the tap action (`+8`, as the click callback's user data) and create/update (`+0x10`, `+0x14`); the pointer itself goes to view data `+0x80`, from where the timer, focus and delete take the callbacks. Nothing looks the id up again | high (static) |
+| Hook | `wp2apps firmware` rewrites that `bl` to the stub's `wp2_wgt_lookup(id, _, _, param)` (stub header 2, word 8): id `0x40` with param bit 7 → the stub's second entry, the same callbacks with class 1; anything else → the stock lookup, tail-called with r0 untouched. The container's `user_data` keeps the whole param (`0x80 \| N`), so create and the tap mask the bit: `StubRam.launch` stays `N` | high (static, disassembly of `target/app-wp2.bin`) |
+| Row packing | the layout puts a tile at the row's x, adds 12 + its width, and starts a new row only once x ≥ 344: it never checks that the next tile fits. A wide tile listed after a single small one would start at x 239. `cards::toggle_widget` keeps the wide tiles of a card before its small ones for that reason | high (static) |
+
+Small tile (`card.rs`): the same create as the wide one with the labels 118 px wide instead of 296 (`W` → `H`), so
+the title and the value lines show as on the wide tile, each cut with `…` at the narrower width. The
+small Apps tile (param `0x80`) is the icon alone, already centred by `PAD`. Stub size: `0x2EA7` → `0x2F27` bytes;
+with the view table `0x3F30` of `0x4000`: 208 bytes are left under `STUB_MAX`.
+
 ### App pages and the Apps menu (2026-11-15, stub version 5)
 
 | Item | Finding | Confidence |

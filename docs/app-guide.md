@@ -402,6 +402,14 @@ and a white value, on the stock card grey in the system font. The app only store
   widgets, two per card, or onto a new card at the end; the stock cards stay as they are.
 - On one card it also mixes with stock widgets (from the host or, later, FMC): a card has two rows in list order, a wide
   widget takes a row, two small ones (class 1 + class 0) share one; a third row is not shown.
+- **Small tile** (stub 7): `app_features!(cmf_wp2_app::WIDGET | cmf_wp2_app::WIDGET_SMALL)` makes the app's tile the
+  small one, 166×166 like the stock Steps tile, two to a row. Same `widget(title, value)` and the same record; the
+  tile shows the same three lines, each cut at 118 px, about five characters (a caption and a number: `hr-probe`
+  writes "Pulse" and "72"). "Add widget" then adds the small tile, after the card's wide ones (a wide tile behind
+  a single small one would hang out of the card: the stock layout does not wrap a row). Keep `WIDGET` in the flags:
+  a loader without small tiles shows "Add widget" only for it, and under an older stub the tile stays wide. From the
+  host the small tile is param `0x80 | (slot + 1)`: `wp2apps cards set widgets:0x40/1s,0x40/2s` (`0x40/0s` is the
+  Apps icon alone).
 - From the host it is widget `0x40` with param `slot + 1` (`wp2apps list` shows the slot):
   `wp2apps cards set widgets:0x40/1,0x40/2 widgets:0x40/3 --hci-port P` (replaces the whole list). Param `0` is the
   "Apps" tile that opens the menu.
@@ -430,7 +438,7 @@ An app can also be a whole page of its own next to the watch face, a swipe away 
   next time the face shows.
 - Examples: `hello` (says "hello page"), `herdr-agents`; `tests/test_app_pages_e2e.py`.
 
-`wp2apps info app.wp2app` lists what a package declares (`"features": ["widget", "page"]`). The record is 8 bytes in
+`wp2apps info app.wp2app` lists what a package declares (`"features": ["widget", "page", "widget-small"]`). The record is 8 bytes in
 `.wp2info` after the icon (`"WP2F"`, flags), so a package with it installs on any loader; an older loader just offers no
 "Add widget" / "Add page".
 

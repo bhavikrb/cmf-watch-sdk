@@ -263,9 +263,28 @@ can't be read back. So the stub answers its own release:
 - Request: `INFO` (`0x90A0`) with slot `STUB_SLOT` = `0xFE`, under the stock session or `K` like every stub frame.
 - Reply (`0xB0A0`): `status` (0) ‖ `STUB_VERSION` (u32 LE) ‖ `LOADER_ABI_MINOR` (u8), 6 bytes. `STUB_VERSION` lives
   in `fw/wp2-core/src/layout.rs`; bump it with every stub change that goes out by OTA. It is not the stub header's
-  `version` (the header format, which `wp2apps firmware` requires to be 1).
+  `version` (the header format: 1, or 2 with the widget lookup of the small tiles; `wp2apps firmware` takes both).
 - An older stub parses `0xFE` as a bad slot and answers `BadRequest` (1): version 1. Stock firmware has no stub and
   doesn't answer at all. One request tells the three apart: no reply, `01`, `00 …`.
 - Host: `install.stub` (`wp2apps list` prints it as `stub`).
 - Stub 6: `BEGIN` into the loader slot or an app page's slot is no longer `BUSY` while the page is only behind the
   face; the page reloads on its next FOCUS (`docs/app-guide.md`, install notes). Same frames, same statuses.
+- Stub 7: small app tiles (below). The stub also writes its version to `StubRam.stub` (`+0xB66`, 0 under an older
+  stub), which is how the loader knows whether "Add widget" may add a small tile.
+
+## Small tiles (stub 7, no ABI bump)
+
+Widget `0x40` with param `0x80 | (slot + 1)` is the app's small tile: 166×166 (stock size class 1), two to a row,
+with the title and the value of the same 64-byte record, cut to its width (`docs/app-guide.md`, "Widget"). `0x80` alone is the
+Apps icon as a small tile. An app asks for it with `WP2F` flag 4 (`WIDGET_SMALL`) next to flag 1.
+
+- The stock widget registry has one free id and keeps the size class in the registry entry, so one id cannot have
+  two sizes. `wp2apps firmware` therefore points the card layout's registry lookup (`bl` at `0x1009BAC2`) at the
+  stub's `wp2_wgt_lookup`, which answers a second entry (class 1) for id `0x40` with bit 7 in the param and calls
+  the stock lookup for everything else (`docs/recon.md`, "Small tiles"). Needs the OTA: the patch is in `app.bin`.
+- Needs a loader with `cards::toggle_widget(.., small)` for "Add widget" to add it; an older loader adds the wide
+  tile for the same app, and a host can set either (`wp2apps cards set widgets:0x40/1s`).
+- Mixed versions: a new loader under an older stub keeps every tile wide (`StubRam.stub` < 7). A small param
+  written by a host under an older stub is laid out wide and shows the Apps tile; a tap on it opens the menu.
+- `ABI_MINOR` stays 3: nothing in the `Api` table changed, `Api::widget` writes the same record.
+
