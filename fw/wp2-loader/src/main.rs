@@ -32,7 +32,7 @@ mod view {
     use core::ptr::addr_of_mut;
     use core::sync::atomic::Ordering;
     use wp2_core::events::{escape_due, map_key, Event, BUTTON, CROWN, TOUCH_DOWN, TOUCH_UP};
-    use wp2_core::pkg::{F_PAGE, F_WIDGET};
+    use wp2_core::pkg::{F_PAGE, F_WIDGET, F_WIDGET_SMALL};
     use wp2_core::stock::KEY_BACK;
 
     const PRELOAD: u32 = 2;
@@ -271,7 +271,7 @@ mod view {
         let mut b: [(&[u8], bool, usize); 4] = [(b"", false, 0); 4];
         let mut n = 0;
         let at = |ask: u8| usize::from(ask) << 4 | row;
-        if entry.features & F_WIDGET != 0 {
+        if entry.features & (F_WIDGET | F_WIDGET_SMALL) != 0 {
             let on = wp2_core::cards::has_widget(&cards, entry.slot);
             b[n] = (if on { b"Remove widget" } else { b"Add widget" }, false, at(ASK_WIDGET));
             n += 1;
@@ -316,7 +316,12 @@ mod view {
         use wp2_core::{cards, fs, layout};
         match answer {
             // ponytail: a full list (8 cards) just leaves it as it is
-            ASK_WIDGET => return edit_cards(|c| drop(cards::toggle_widget(c, entry.slot))),
+            // the small tile is laid out by stub 7 (card.rs); an older stub would show it as the Apps tile, so
+            // under one the app keeps the wide tile
+            ASK_WIDGET => {
+                let small = entry.features & F_WIDGET_SMALL != 0 && layout::stub_ram().stub >= 7;
+                return edit_cards(|c| drop(cards::toggle_widget(c, entry.slot, small)));
+            }
             ASK_PAGE => return edit_cards(|c| drop(cards::toggle_page(c, entry.slot))),
             ASK_DELETE => {}
             _ => return,

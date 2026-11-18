@@ -20,6 +20,8 @@ pub struct StubHeader {
     applist_layout: extern "C" fn(*mut u8) -> i32,
     /// wgt_reg entry for the free widget id 0x40 (card.rs); was reserved (0) before
     widget: &'static card::WgtReg,
+    /// header 2: takes the card layout's wgt_reg lookup, for the small tiles of id 0x40 (card.rs)
+    wgt_lookup: extern "C" fn(u32, u32, u32, u32) -> *const card::WgtReg,
 }
 
 unsafe impl Sync for StubHeader {}
@@ -28,13 +30,14 @@ unsafe impl Sync for StubHeader {}
 #[used]
 static HEADER: StubHeader = StubHeader {
     magic: *b"WP2S",
-    version: 1,
+    version: 2,
     boot: wp2_boot,
     ble: ble::wp2_ble_default,
     view_proc: view::wp2_view_proc,
     view_name: b"wp2_view\0".as_ptr(),
     applist_layout: applist::wp2_applist_layout,
     widget: &card::WIDGET,
+    wgt_lookup: card::wp2_wgt_lookup,
 };
 
 // Replaces `bl 0x10146AA4` (ResFbHeap init, 4 of its 8 arguments on the stack) at 0x101884FA.
@@ -56,6 +59,7 @@ extern "C" fn wp2_boot_c() {
     ram.magic = 0x5750_3253;
     ram.running_slot = 0xFF;
     ram.api = 1;
+    ram.stub = wp2_core::layout::STUB_VERSION as u8;
     ram.kick = ble::wp2_kick as usize as u32;
     ram.kick_magic = wp2_core::layout::KICK_MAGIC;
 }

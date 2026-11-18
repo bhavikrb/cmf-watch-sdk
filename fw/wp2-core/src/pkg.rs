@@ -111,6 +111,8 @@ pub const ICON_BYTES: u32 = ICON_SIDE * ICON_SIDE * 3;
 pub const FEATURES: usize = 8;
 pub const F_WIDGET: u8 = 1;
 pub const F_PAGE: u8 = 2;
+/// the app's widget is the small tile (166×166) instead of the wide one; needs stub 7, an older stub keeps it wide
+pub const F_WIDGET_SMALL: u8 = 4;
 
 pub fn features(d: &[u8]) -> u8 {
     match d {
@@ -197,6 +199,7 @@ mod tests {
     #[test]
     fn feature_record() {
         assert_eq!(features(b"WP2F\x03\0\0\0"), F_WIDGET | F_PAGE);
+        assert_eq!(features(b"WP2F\x04\0\0\0"), F_WIDGET_SMALL);
         assert_eq!(features(b"WP2I\x01\x05\0\0"), 0);
         assert_eq!(features(b"WP2"), 0);
     }

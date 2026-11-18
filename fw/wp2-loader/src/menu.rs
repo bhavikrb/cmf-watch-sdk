@@ -10,7 +10,7 @@ pub struct Entry {
     pub len: u8,
     pub version: u32,
     pub size: u32,
-    // pkg::F_WIDGET | F_PAGE, read after the icon by scan
+    // pkg::F_WIDGET | F_PAGE | F_WIDGET_SMALL, read after the icon by scan
     pub features: u8,
 }
 

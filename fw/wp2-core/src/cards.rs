@@ -10,8 +10,12 @@ const WIDGETS: u8 = 1;
 const VIEW: u8 = 2;
 /// the stub's widget (wgt_reg slot 0x40); param 0 = Apps, slot + 1 = that app
 pub const APP_WIDGET: u8 = 0x40;
-/// app widgets are wide (class 3): two fill a card
-const PER_CARD: u8 = 2;
+/// param bit (stub 7, card.rs): the small tile (class 1, 166×166) instead of the wide one (class 3, 344×166)
+pub const SMALL: u8 = 0x80;
+/// a card is a 2×2 grid of 166 px cells: a wide tile takes a row, two small ones share one
+const ROWS: usize = 2;
+/// the stock layout reads at most four widgets of a card
+const PER_CARD: usize = 4;
 /// view ids 0xF8 + slot: the app in that slot as a whole page (stub view table, `wp2apps firmware`)
 pub const PAGE_VIEW: u16 = 0xF8;
 
@@ -48,7 +52,14 @@ fn app_widget_at(c: &Cards, i: usize, slot: u8) -> Option<usize> {
     if e[0] != WIDGETS {
         return None;
     }
-    (0..usize::from(e[2]).min(4)).find(|&k| e[3 + 2 * k] == APP_WIDGET && e[4 + 2 * k] == slot + 1)
+    (0..usize::from(e[2]).min(PER_CARD)).find(|&k| e[3 + 2 * k] == APP_WIDGET && e[4 + 2 * k] & !SMALL == slot + 1)
+}
+
+// rows a card of app widgets takes with one more tile; the wide ones stand first (toggle_widget)
+fn rows_with(e: &[u8], small: bool) -> usize {
+    let n = usize::from(e[2]);
+    let smalls = (0..n).filter(|&k| e[4 + 2 * k] & SMALL != 0).count() + usize::from(small);
+    n + 1 - smalls + smalls.div_ceil(2)
 }
 
 pub fn has_widget(c: &Cards, slot: u8) -> bool {
@@ -59,9 +70,9 @@ pub fn has_page(c: &Cards, slot: u8) -> bool {
     (0..len(c)).any(|i| view(c, i) == Some(PAGE_VIEW + u16::from(slot)))
 }
 
-/// Adds the app's widget (to the last card that holds only app widgets and has room, else a new card at the end),
-/// or removes it (and its card once empty). Ok(true) = now shown.
-pub fn toggle_widget(c: &mut Cards, slot: u8) -> Result<bool, Full> {
+/// Adds the app's widget, `small` or wide (to the last card that holds only app widgets and has room, else a new card
+/// at the end), or removes it, whichever size it has (and its card once empty). Ok(true) = now shown.
+pub fn toggle_widget(c: &mut Cards, slot: u8, small: bool) -> Result<bool, Full> {
     for i in 0..len(c) {
         if let Some(k) = app_widget_at(c, i, slot) {
             let e = entry(c, i);
@@ -78,7 +89,10 @@ pub fn toggle_widget(c: &mut Cards, slot: u8) -> Result<bool, Full> {
     let n = len(c);
     let last = (0..n).rev().find(|&i| {
         let e = &c[i * ENTRY..(i + 1) * ENTRY];
-        e[0] == WIDGETS && e[2] < PER_CARD && (0..usize::from(e[2])).all(|k| e[3 + 2 * k] == APP_WIDGET)
+        e[0] == WIDGETS
+            && usize::from(e[2]) < PER_CARD
+            && (0..usize::from(e[2])).all(|k| e[3 + 2 * k] == APP_WIDGET)
+            && rows_with(e, small) <= ROWS
     });
     let i = match last {
         Some(i) => i,
@@ -89,8 +103,12 @@ pub fn toggle_widget(c: &mut Cards, slot: u8) -> Result<bool, Full> {
         None => return Err(Full),
     };
     let e = entry(c, i);
-    let k = usize::from(e[2]);
-    (e[3 + 2 * k], e[4 + 2 * k]) = (APP_WIDGET, slot + 1);
+    let n = usize::from(e[2]);
+    // The stock layout puts a tile right of the previous one while the row has room and never checks that it fits:
+    // a wide tile after a single small one would hang out of the card. So wide tiles go before the small ones.
+    let k = if small { n } else { (0..n).find(|&k| e[4 + 2 * k] & SMALL != 0).unwrap_or(n) };
+    e.copy_within(3 + 2 * k..3 + 2 * n, 3 + 2 * (k + 1));
+    (e[3 + 2 * k], e[4 + 2 * k]) = (APP_WIDGET, slot + 1 | if small { SMALL } else { 0 });
     e[2] += 1;
     Ok(true)
 }
@@ -119,7 +137,7 @@ pub fn toggle_page(c: &mut Cards, slot: u8) -> Result<bool, Full> {
 /// Drops the app's widget and page (the app is deleted).
 pub fn forget(c: &mut Cards, slot: u8) {
     while has_widget(c, slot) {
-        let _ = toggle_widget(c, slot);
+        let _ = toggle_widget(c, slot, false);
     }
     if has_page(c, slot) {
         let _ = toggle_page(c, slot);
@@ -142,19 +160,49 @@ mod tests {
     #[test]
     fn widgets_fill_cards_two_at_a_time() {
         let mut c = cards(&[&[VIEW, 0, 0xB2, 0], &[WIDGETS, 0, 1, 0x19, 0]]);
-        assert_eq!(toggle_widget(&mut c, 2), Ok(true));
+        assert_eq!(toggle_widget(&mut c, 2, false), Ok(true));
         assert_eq!(&c[24..29], &[WIDGETS, 0, 1, 0x40, 3], "a stock widget card is not shared");
-        assert_eq!(toggle_widget(&mut c, 0), Ok(true));
+        assert_eq!(toggle_widget(&mut c, 0, false), Ok(true));
         assert_eq!(&c[24..31], &[WIDGETS, 0, 2, 0x40, 3, 0x40, 1]);
-        assert_eq!(toggle_widget(&mut c, 5), Ok(true));
+        assert_eq!(toggle_widget(&mut c, 5, false), Ok(true));
         assert_eq!(&c[36..41], &[WIDGETS, 0, 1, 0x40, 6]);
         assert!(has_widget(&c, 0) && has_widget(&c, 5) && !has_widget(&c, 1));
-        assert_eq!(toggle_widget(&mut c, 2), Ok(false));
+        assert_eq!(toggle_widget(&mut c, 2, false), Ok(false));
         assert_eq!(&c[24..31], &[WIDGETS, 0, 1, 0x40, 1, 0, 0]);
-        assert_eq!(toggle_widget(&mut c, 0), Ok(false));
+        assert_eq!(toggle_widget(&mut c, 0, false), Ok(false));
         assert_eq!(&c[24..29], &[WIDGETS, 0, 1, 0x40, 6], "empty card removed, the rest packed");
         assert!(c[36..0x60].iter().all(|&b| b == 0));
         assert_eq!(c[0x60], 1, "wrap byte kept");
+    }
+
+    #[test]
+    fn small_tiles_share_a_row() {
+        let mut c = cards(&[&[VIEW, 0, 0xB2, 0]]);
+        for slot in 0..4 {
+            assert_eq!(toggle_widget(&mut c, slot, true), Ok(true));
+        }
+        assert_eq!(&c[12..23], &[WIDGETS, 0, 4, 0x40, 0x81, 0x40, 0x82, 0x40, 0x83, 0x40, 0x84], "two rows of two");
+        assert_eq!(toggle_widget(&mut c, 4, true), Ok(true));
+        assert_eq!(&c[24..29], &[WIDGETS, 0, 1, 0x40, 0x85], "a full card is not touched");
+        // a wide tile goes before the small ones: after a single small one the stock layout would hang it out
+        assert_eq!(toggle_widget(&mut c, 5, false), Ok(true));
+        assert_eq!(&c[24..31], &[WIDGETS, 0, 2, 0x40, 6, 0x40, 0x85]);
+        assert_eq!(toggle_widget(&mut c, 6, true), Ok(true));
+        assert_eq!(&c[24..33], &[WIDGETS, 0, 3, 0x40, 6, 0x40, 0x85, 0x40, 0x87], "a wide row, then a row of two");
+        assert_eq!(toggle_widget(&mut c, 7, true), Ok(true));
+        assert_eq!(&c[36..41], &[WIDGETS, 0, 1, 0x40, 0x88], "a third row does not fit: a new card");
+        // either size is found and removed, whatever the caller says it is
+        assert!(has_widget(&c, 4) && has_widget(&c, 5) && !has_widget(&cards(&[]), 4));
+        assert_eq!(toggle_widget(&mut c, 4, false), Ok(false));
+        assert_eq!(&c[24..33], &[WIDGETS, 0, 2, 0x40, 6, 0x40, 0x87, 0, 0]);
+        assert_eq!(toggle_widget(&mut c, 1, true), Ok(false));
+        assert_eq!(&c[12..23], &[WIDGETS, 0, 3, 0x40, 0x81, 0x40, 0x83, 0x40, 0x84, 0, 0]);
+        // two wide tiles fill a card as before; a small one then takes a new card
+        let mut c = cards(&[&[WIDGETS, 0, 2, 0x40, 1, 0x40, 2]]);
+        assert_eq!(toggle_widget(&mut c, 2, true), Ok(true));
+        assert_eq!(&c[12..17], &[WIDGETS, 0, 1, 0x40, 0x83]);
+        forget(&mut c, 2);
+        assert_eq!(len(&c), 1);
     }
 
     #[test]
@@ -176,7 +224,8 @@ mod tests {
     fn full_list_and_forget() {
         let mut c = cards(&[&[VIEW, 0, 1, 0][..]; 8]);
         assert_eq!(toggle_page(&mut c, 0), Err(Full));
-        assert_eq!(toggle_widget(&mut c, 0), Err(Full));
+        assert_eq!(toggle_widget(&mut c, 0, false), Err(Full));
+        assert_eq!(toggle_widget(&mut c, 0, true), Err(Full));
         let mut c = cards(&[&[VIEW, 0, 0xF8, 0], &[WIDGETS, 0, 2, 0x40, 1, 0x40, 2]]);
         forget(&mut c, 0);
         assert_eq!(&c[..5], &[WIDGETS, 0, 1, 0x40, 2]);

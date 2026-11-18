@@ -7,11 +7,13 @@ pub const LOADER_ABI_MINOR: u16 = 3;
 // the stub's own release, bumped with every stub change that goes out by OTA. A host reads it with INFO for
 // STUB_SLOT (docs/abi-1.4.md, "Stub version"): the watch reports 1.0.0.73 whatever app.bin it runs, so this is the
 // only way to tell one patched firmware from another. 1 = every stub before the field was readable. Not the stub
-// header's `version`: that one is the header format, which `wp2apps firmware` checks is 1.
+// header's `version`: that one is the header format (1, or 2 with the widget lookup); `wp2apps firmware` takes both.
 // 3 = the Apps widget in wgt_reg slot 0x40 (docs/recon.md, "Widget cards")
 // 4 = app widgets: 0x40 with param_id slot + 1 shows the app's record and launches it on a tap
 // 5 = app pages: views 0xF8 + slot run the loader too, which starts that app (cards.rs)
-pub const STUB_VERSION: u32 = 6;
+// 6 = an install into a page that is only behind the face is taken; the page reloads on its next focus
+// 7 = small app tiles: 0x40 with param_id 0x80 | (slot + 1) is laid out 166×166 (card.rs `wp2_wgt_lookup`)
+pub const STUB_VERSION: u32 = 7;
 // INFO for this slot answers the stub's version instead of a package header; an older stub answers BadRequest
 pub const STUB_SLOT: u8 = 0xFE;
 pub const STUB_RAM: u32 = 0x3871_EEC0;
@@ -112,6 +114,8 @@ pub struct StubRam {
     pub loader_focus: u8,
     // stub 6: such an install landed; the page's next FOCUS loads the loader again from NAND (view.rs)
     pub reload: u8,
+    // stub 7: STUB_VERSION, so the loader knows what the stub under it can do (small tiles); an older stub leaves 0
+    pub stub: u8,
 }
 
 pub const KICK_MAGIC: u32 = 0x4B43_494B; // "KICK"
@@ -146,6 +150,7 @@ mod tests {
         assert_eq!(offset_of!(StubRam, loader_view), 0xB62);
         assert_eq!(offset_of!(StubRam, loader_focus), 0xB64);
         assert_eq!(offset_of!(StubRam, reload), 0xB65);
+        assert_eq!(offset_of!(StubRam, stub), 0xB66);
         assert!(size_of::<StubRam>() <= 0xE00);
     }
 

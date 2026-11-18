@@ -2,11 +2,13 @@
 // the free widget registry slot 0x40 (wgt_reg 0x101EFC88) at WIDGET; a host puts it on a card with 0x906D
 // (`wp2apps cards`). The stock card view lays the widget out, sizes and colours its container and calls `tap` on a
 // click; the callbacks below only fill the container. They run on ui_service. param_id 0 is "Apps", N the app in
-// slot N - 1 with its widget record (docs/app-guide.md, "Widget").
+// slot N - 1 with its widget record (docs/app-guide.md, "Widget"). With bit 7 the tile is the small one: the registry
+// has no second free id and the size class sits in the entry, so `wp2_wgt_lookup` answers for 0x40 in the layout.
 use core::mem::transmute;
 use core::ptr::null_mut;
 use wp2_core::fs::{self, File};
 use wp2_core::heap::{self, RES};
+use wp2_core::cards::SMALL;
 use wp2_core::layout::{slot_path, stub_ram, widget_path, WIDGET_REC, WIDGET_TITLE};
 
 use crate::applist::{icon_block, ImgDsc, ICON};
@@ -16,8 +18,11 @@ pub const ID: u8 = 0x40;
 /// size class: index into the stock size table 0x101DF780 (0 circle 166, 1 square 166, 2 tall 166x344,
 /// 3 wide 344x166, 4 full 344x344); 3 is the first style of every stock family
 const WIDE: u8 = 3;
+const SQUARE: u8 = 1;
 const W: i32 = 344;
 const H: i32 = 166;
+/// the stock registry lookup (id -> entry, NULL above 0x62); its call in the card layout goes to `wp2_wgt_lookup`
+const STOCK_LOOKUP: u32 = 0x1009B79D;
 /// the loader view, opened by `tap`
 const TAP_VIEW: u32 = 0xF0;
 
@@ -104,18 +109,24 @@ pub struct State {
     block: *mut u8,
 }
 
-pub static WIDGET: WgtReg = WgtReg {
-    id: ID,
-    class: WIDE,
-    state: size_of::<State>() as u16,
-    scene: 0,
-    tap,
-    delete,
-    create,
-    update,
-    focus,
-    reload,
-};
+const fn entry(class: u8) -> WgtReg {
+    WgtReg { id: ID, class, state: size_of::<State>() as u16, scene: 0, tap, delete, create, update, focus, reload }
+}
+
+pub static WIDGET: WgtReg = entry(WIDE);
+static SMALL_WIDGET: WgtReg = entry(SQUARE);
+
+/// Replaces `bl 0x1009B79C` at 0x1009BAC2, the card layout's lookup of a card entry's widget (`wp2apps firmware`).
+/// There r0 is the widget id and r3 still holds the entry's param (`ldrb r3, [r3, #2]` two instructions before;
+/// r1 and r2 are whatever the layout left). The layout takes the size class, the tap action and the callbacks from
+/// the entry it gets back and keeps the pointer for the timer and the delete, so the small entry is all a small
+/// tile needs (docs/recon.md, "Widget cards").
+pub extern "C" fn wp2_wgt_lookup(id: u32, _r1: u32, _r2: u32, param: u32) -> *const WgtReg {
+    if id == ID as u32 && param as u8 & SMALL != 0 {
+        return &SMALL_WIDGET;
+    }
+    stock!(STOCK_LOOKUP, fn(u32) -> *const WgtReg)(id)
+}
 
 fn style(obj: Obj, prop: u32, value: u32) {
     stock!(OBJ_SET_LOCAL_STYLE_PROP, fn(Obj, u32, u32, u32) -> ())(obj, prop, value, 0)
@@ -125,7 +136,7 @@ fn param(obj: Obj) -> u8 {
     unsafe { *obj.add(USER_DATA) }
 }
 
-fn label(s: &State, parent: Obj, text: *const u8, color: u32, x: i32, y: i32, h: i32) -> Obj {
+fn label(s: &State, parent: Obj, text: *const u8, color: u32, x: i32, y: i32, w: i32, h: i32) -> Obj {
     let label = stock!(LABEL_CREATE, fn(Obj) -> Obj)(parent);
     if label.is_null() {
         return label;
@@ -138,7 +149,7 @@ fn label(s: &State, parent: Obj, text: *const u8, color: u32, x: i32, y: i32, h:
     stock!(LABEL_SET_LONG_MODE, fn(Obj, u32) -> ())(label, LONG_DOT);
     stock!(LABEL_SET_TEXT, fn(Obj, *const u8) -> ())(label, text);
     stock!(OBJ_SET_POS, fn(Obj, i32, i32) -> ())(label, x, y);
-    stock!(OBJ_SET_SIZE, fn(Obj, i32, i32) -> ())(label, W - x - 24, h);
+    stock!(OBJ_SET_SIZE, fn(Obj, i32, i32) -> ())(label, w - x - 24, h);
     label
 }
 
@@ -162,7 +173,10 @@ extern "C" fn create(ctx: *mut Ctx) -> i32 {
     style(ctx.obj, STYLE_BG_COLOR, CARD_BG);
     s.font_open = (stock!(FONT_OPEN, fn(*mut u32, *const u8) -> i32)(s.font.as_mut_ptr(), FONT_PATH.as_ptr()) == 0) as u32;
     let line = if s.font_open != 0 { unsafe { *s.font.as_ptr().add(2) as i32 } } else { 32 }.clamp(1, H);
-    let slot = param(ctx.obj).wrapping_sub(1);
+    let small = param(ctx.obj) & SMALL != 0;
+    // a small tile is H wide: the same caption and value lines, each cut to its width
+    let w = if small { H } else { W };
+    let slot = (param(ctx.obj) & !SMALL).wrapping_sub(1);
     if slot < wp2_core::layout::SLOTS {
         // ponytail: read once per layout; the card is laid out again whenever the face shows, and an app only
         // runs (and writes its record) under the loader view, which deletes the cards (emulator, docs/recon.md)
@@ -177,8 +191,8 @@ extern "C" fn create(ctx: *mut Ctx) -> i32 {
             rec[..WIDGET_TITLE].copy_from_slice(&head[8..]);
         }
         rec[WIDGET_TITLE - 1] = 0;
-        s.label = label(s, ctx.obj, rec.as_ptr(), GREY, 24, 24, line);
-        s.value = label(s, ctx.obj, rec[WIDGET_TITLE..].as_ptr(), WHITE, 24, 24 + line + 8, H - 48 - line - 8);
+        s.label = label(s, ctx.obj, rec.as_ptr(), GREY, 24, 24, w, line);
+        s.value = label(s, ctx.obj, rec[WIDGET_TITLE..].as_ptr(), WHITE, 24, 24 + line + 8, w, H - 48 - line - 8);
         return 0;
     }
     if let Some((block, dsc)) = icon_block() {
@@ -194,7 +208,10 @@ extern "C" fn create(ctx: *mut Ctx) -> i32 {
             stock!(OBJ_ADD_FLAG, fn(Obj, u32) -> ())(img, EVENT_BUBBLE);
         }
     }
-    s.label = label(s, ctx.obj, TEXT.as_ptr(), WHITE, PAD + ICON as i32 + 20, (H - line) / 2, line);
+    // the small Apps tile is the icon alone, centred as PAD already puts it
+    if !small {
+        s.label = label(s, ctx.obj, TEXT.as_ptr(), WHITE, PAD + ICON as i32 + 20, (H - line) / 2, w, line);
+    }
     0
 }
 
@@ -226,7 +243,7 @@ extern "C" fn delete(ctx: *mut Ctx) -> i32 {
 // r0 = the container (stock 0x101B1B14 tail-calls the action with the current target, emulator): the loader takes
 // `launch` at LAYOUT and starts that slot instead of showing the menu
 extern "C" fn tap(obj: Obj) {
-    stub_ram().launch = param(obj);
+    stub_ram().launch = param(obj) & !SMALL;
     stock!(OPEN_VIEW, fn(u32, u32) -> i32)(TAP_VIEW, 0);
 }
 
